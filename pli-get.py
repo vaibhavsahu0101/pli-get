@@ -65,8 +65,9 @@ class PLI:
 
     n_angles = None
 
-    # PLI arduino connection
-    def process_message(self, message):
+    # PLI machine
+
+    def process_pli_machine_message(self, message):
         '''Process a message received from the PLI machine.'''
 
         print("PLI >", message)
@@ -82,23 +83,13 @@ class PLI:
                 self.status = "ready"
                 print("motors ready")
 
-    async def listen_for_xy_stage_messages(self, ser):
-        '''Listen for messages from the XY stage.'''
-
-        print("listen for stage messages")
-        while True:
-            if ser.in_waiting:
-                message = ser.readline().decode().strip()
-                print(message)
-            await asyncio.sleep(0.1)
-
-    async def listen_for_messages(self, ser):
-        '''Listen for messages from the PLI machine.'''
+    async def listen_to_pli_machine_messages(self, ser):
+        '''Listen to messages from the PLI machine.'''
 
         while self.status != "done":
             if ser.in_waiting:
                 message = ser.readline().decode().strip()
-                self.process_message(message)
+                self.process_pli_machine_message(message)
             await asyncio.sleep(0.1)
 
     async def wait_for_ready(self):
@@ -107,58 +98,21 @@ class PLI:
         while self.status != "ready":
             await asyncio.sleep(0.1)
 
-    def new_xy_stage(self):
-        ports = serial.tools.list_ports.comports()
-        xy_stage_port = None
-        for port, desc, hwid in sorted(ports):
-            if self.debug:
-                print(f"{port}: {desc} [{hwid}]")
-            if "140" in port:
-                xy_stage_port = port
-        if self.debug:
-            print(f"xy_stage_port: {xy_stage_port}")
-
-        ser = None
-        if xy_stage_port is None:
-            print("XY stage not found.")
-        else:
-            ser = serial.Serial(xy_stage_port, 115200)
-            for _ in range(2):
-                output = ser.readline()
-                print(output)
-            ser.write(b"$G\n")
-            for _ in range(2):
-                output = ser.readline()
-                print(output)
-        return ser
-
-    def xy_stage_write(self, string, sleep=0.01):
-        '''Write a string to the xy stage.'''
-
-        bin_cmd = string.encode() # bytes(string, "ascii")
-
-        # add carriage return at the end
-        bin_cmd += b"\r\n"
-
-        print(bin_cmd)
-        self.xy_stage_serial.write(bin_cmd)
-        for _ in range(1):
-            output = self.xy_stage_serial.readline()
-            print(output)
-        if sleep:
-            time.sleep(sleep)
-
     def new_pli(self):
         '''Create a new serial connection to the PLI machine.'''
 
+        list_of_known_arduino_ports = [
+            "AB0LS12X", # Paris
+            "ttyUSB0"   # Alicante
+        ]
+
         ports = serial.tools.list_ports.comports()
         arduino_port = None
-        xy_stage_port = None
         for port, desc, hwid in sorted(ports):
             if self.debug:
                 print(f"{port}: {desc} [{hwid}]")
             # if "usbmodem" in port or "usbserial" in port:
-            if "AB0LS12X" in port:
+            if port in list_of_known_arduino_ports:
                 arduino_port = port
         if self.debug:
             print(f"arduino_port: {arduino_port}")
@@ -172,7 +126,18 @@ class PLI:
         return ser
 
     def pli_write(self, string, sleep=0.01):
-        '''Write a string to the PLI machine.'''
+        '''Send raw commands to the PLI machine.
+        Commands:
+            delay n: delay between steps of the machine in ms.
+              From 1 (fast) to 30 (slow) are reasonable values
+            i{+, -}n: i is the index of the motor (1 or 2),
+              + and - indicate the direction of the motion, and
+              n indicates the number of steps to move.
+              For example, "1+100" moves motor 1, ccw, 100 steps.
+            wait n: pauses the execution of commands for n seconds.
+              This command is not sent to the PLI machine but
+              executed locally.
+        '''
         bin_cmd = bytes(string, "ascii")
         if string.startswith("delay"):
             bin_cmd += b"\r\n"
@@ -223,6 +188,65 @@ class PLI:
         '''reset the number of steps.'''
 
         self.steps = 0
+
+    # XY stage
+
+    async def listen_to_xy_stage_messages(self, ser):
+        '''Listen for messages from the XY stage.'''
+
+        print("listen for stage messages")
+        while True:
+            if ser.in_waiting:
+                message = ser.readline().decode().strip()
+                print(message)
+            await asyncio.sleep(0.1)
+
+    def new_xy_stage(self):
+        ports = serial.tools.list_ports.comports()
+        xy_stage_port = None
+        for port, desc, hwid in sorted(ports):
+            if self.debug:
+                print(f"{port}: {desc} [{hwid}]")
+            if "140" in port:
+                xy_stage_port = port
+        if self.debug:
+            print(f"xy_stage_port: {xy_stage_port}")
+
+        ser = None
+        if xy_stage_port is None:
+            print("XY stage not found.")
+        else:
+            ser = serial.Serial(xy_stage_port, 115200)
+            for _ in range(2):
+                output = ser.readline()
+                print(output)
+            ser.write(b"$G\n")
+            for _ in range(2):
+                output = ser.readline()
+                print(output)
+        return ser
+
+    def xy_stage_write(self, string, sleep=0.01):
+        '''Send raw commands to the xy stage, semi-colon separated.
+        The xy stage listens to g-code. For example, G21G91G1X120F2000
+        will move the x motor 120 steps with a feed rate of 2000.
+        In addition, the command "wait n" will pause the execution of
+        commands for n seconds. This command is not sent to the XY
+        stage, but executed locally.
+        '''
+
+        bin_cmd = string.encode() # bytes(string, "ascii")
+
+        # add carriage return at the end
+        bin_cmd += b"\r\n"
+
+        print(bin_cmd)
+        self.xy_stage_serial.write(bin_cmd)
+        for _ in range(1):
+            output = self.xy_stage_serial.readline()
+            print(output)
+        if sleep:
+            time.sleep(sleep)
 
     ## Basler camera
 
@@ -378,7 +402,7 @@ class PLI:
     ## Autocalibration
 
     def mean_value_image(self, img=None):
-        '''Get the mean value of an image for calibration.'''
+        '''Get the mean value of an image for calibration. If no image is passed, acquire a new one.'''
         if img is None:
             img = self.grab_image()[::10, ::10]
         else:
@@ -434,6 +458,10 @@ async def calibrate_task(pli):
 async def acquire_task(pli, base_path):
     '''Acquire one slice of the sample.'''
 
+    print("""
+@todo: the core of this function should be moved to a function called acquire within the PLI class, like for calibrate
+""")
+
     steps_whole_turn = pli.n_large_gear_teeth/pli.n_small_gear_teeth * pli.n_stepper_steps
     print("steps for a whole turn:", steps_whole_turn)
 
@@ -487,8 +515,8 @@ def main(args):
     pli = PLI()
 
     loop = asyncio.get_event_loop()
-    listener_task = loop.create_task(pli.listen_for_messages(pli.pli_serial))
-    # xy_stage_listener_task = loop.create_task(pli.listen_for_xy_stage_messages(pli.xy_stage_serial))
+    listener_task = loop.create_task(pli.listen_to_pli_machine_messages(pli.pli_serial))
+    # xy_stage_listener_task = loop.create_task(pli.listen_to_xy_stage_messages(pli.xy_stage_serial))
 
     if args.calibrate is True:
         commands_task = loop.create_task(calibrate_task(pli))
@@ -584,9 +612,8 @@ if __name__ == "__main__":
     parser.add_argument('--gain', type=float, help='camera gain')
     parser.add_argument('--exposure', type=float, help='camera exposure time')
     parser.add_argument('--gamma', type=float, help='camera gamma')
-    parser.add_argument('--pli_commands', type=str, help='raw command to send to the PLI machine')
-    parser.add_argument('--xy_commands', type=str, help='raw command to send to the XY stage')
-    parser.add_argument('--settings', help='print the current settings')
+    parser.add_argument('--pli_commands', type=str, help='raw commands to send to the PLI machine, separated by a semi-colon')
+    parser.add_argument('--xy_commands', type=str, help='raw commands to send to the XY stage, separated by a semi-colon')
 
     main(parser.parse_args())
 
