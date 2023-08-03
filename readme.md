@@ -37,10 +37,15 @@ The stepper motors are configure for 800 steps in a full turn.
 
 # API
 
+```python
 class DummySerial: fake serial connection used for debugging
+```
 
+```python
 class DummyCamera: fake camera connection used for debugging
+```
 
+```python
 class PLI: main class controlling all aspects of the acquisition of pli data
     # hardware connection variables
     pli_serial: serial port of the pli machine
@@ -106,9 +111,12 @@ class PLI: main class controlling all aspects of the acquisition of pli data
     # autocalibration
     mean_value_image(img=None): compute the mean value of an image, used for calibration.
     calibrate(initial_step): launch an autocalibration sequence, with an initial search step of initial_step
+```
 
+```python
 calibrate_task(pli): asynchronous calibration task, calls calibrate()
 
 acquire_task(pli, base_path): asynchronous task to acquire images at n_angles. The images are stored in a temporary image array and saved at base_path at the end.
 
 main: parse command line arguments an call the appropriate functions
+```
