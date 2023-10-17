@@ -29,8 +29,8 @@ With a spli6 PLI machine, a Basler camera and an XY stage.
 For some reason which we haven't figured out, the PLI machine runs artifactual steps during initialisation if the computer controlling is unplugged... work in progress.
 
 ## Current configurations
-The Basler XXX camera can acquire grey-scale images in color_mode = Mono12.
-The Basler YYY camera can acquire grey-scale images in color_mode = Mono8, and colour images with color_mode = RGB8.
+The Basler ac2A4504-18ucBAS camera can acquire grey-scale images in color_mode = Mono12.
+The Basler acA5472-17uc camera can acquire grey-scale images in color_mode = Mono8, and colour images with color_mode = RGB8.
 The small PLI machine using 67 mm polarisers has gears with 96 teeth (42 in the motors).
 The large PLI machine using 95 mm polarisers has gears with 112 teeth (and the same 42 in the motors).
 The stepper motors are configure for 800 steps in a full turn.

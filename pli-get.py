@@ -15,6 +15,8 @@ from pypylon import pylon
 from skimage import io
 import serial
 import serial.tools.list_ports
+import matplotlib.pyplot as plt
+from matplotlib.widgets import TextBox
 
 ## PLI machine
 
@@ -64,6 +66,8 @@ class PLI:
     n_small_gear_teeth = None
 
     n_angles = None
+
+    interactive_mode = False
 
     # PLI machine
 
@@ -367,7 +371,7 @@ class PLI:
             img = np.zeros((100, 100, 3), dtype=np.uint8)
         else:
             self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
-            grab_result = self.camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException)
+            grab_result = self.camera.RetrieveResult(500, pylon.TimeoutHandling_ThrowException)
             if grab_result.GrabSucceeded():
                 img = grab_result.Array[:, :]
             grab_result.Release()
@@ -441,6 +445,73 @@ class PLI:
             val0 = val1
         return vals, pos
 
+    async def interactive(self):
+        '''Interactive mode for configuring exposure, gain and gamma.'''
+        # if self.pli_serial is None or self.camera is None:
+        if self.camera is None:
+            print("Empty PLI and camera: Interactive mode")
+            return
+        time.sleep(1)
+        self.pli_write("delay 5")
+        self.interactive_mode = True
+        plt.rcParams['toolbar'] = 'None'
+        fig, ax_dict = plt.subplot_mosaic("AAB;AAB;AAB;AAB;AAC;AAD;AAE", figsize=(10, 5))
+
+        def on_close(event):
+            print(f"--exposure {self.camera.ExposureTime.Value} --gain {self.camera.Gain.Value} --gamma {self.camera.Gamma.Value}")
+            self.interactive_mode = False
+        fig.canvas.mpl_connect('close_event', on_close)
+
+        fig.subplots_adjust(left=0.05, bottom=0.05, right=0.95, top=0.95, wspace=0.05, hspace=0.05)
+        self.camera.Close()
+        self.camera.Open()
+        self.camera.UserSetSelector = "Default"
+        self.camera.UserSetLoad.Execute()
+        self.camera.PixelFormat.SetValue("Mono12")
+        print(self.camera.PixelFormat.Value)
+
+        # self.camera.Height = 2000
+        # self.camera.Width = 2000
+        # self.camera.AcquisitionFrameRateEnable.SetValue(True)
+        # self.camera.AcquisitionFrameRate.SetValue(1.0)
+        # self.camera.StreamGrabber.MaxBufferSize = 20286016
+        # self.camera.StreamGrabber.MaxTransferSize = 262144
+
+        input_box1 = TextBox(ax_dict["C"], 'Exposure', initial=self.camera.ExposureTime.Value)
+        def exposure(val):
+            self.camera.ExposureAuto.SetValue("Off")
+            self.camera.ExposureTime.SetValue(float(val))
+        input_box1.on_submit(exposure)
+
+        input_box2 = TextBox(ax_dict["D"], 'Gain', initial=self.camera.Gain.Value)
+        def gain(val):
+            self.camera.GainAuto.SetValue("Off")
+            self.camera.Gain.SetValue(float(val))
+        input_box2.on_submit(gain)
+
+        input_box3 = TextBox(ax_dict["E"], 'Gamma', initial=self.camera.Gamma.Value)
+        def gamma(val):
+            self.camera.Gamma.SetValue(float(val))
+        input_box3.on_submit(gamma)
+
+        self.camera.StartGrabbing(pylon.GrabStrategy_LatestImageOnly)
+        while self.interactive_mode is True:
+            with self.camera.RetrieveResult(5000, pylon.TimeoutHandling_ThrowException) as grab_result:
+                img = grab_result.Array[::10, ::10]
+                ax_dict["A"].clear()
+                ax_dict["A"].imshow(img, cmap="gray")
+                ax_dict["B"].clear()
+                ax_dict["B"].hist(
+                    img.flatten(),
+                    bins=64,
+                    range=(0, self.camera.PixelDynamicRangeMax.Value),
+                    density=True)
+                ax_dict["B"].get_yaxis().set_visible(False)
+            plt.pause(0.1)
+        plt.close(fig)
+        self.camera.StopGrabbing()
+        self.camera.Close()
+
     ## Constructor
 
     def __init__(self):
@@ -453,6 +524,11 @@ async def calibrate_task(pli):
     vals, pos = await pli.calibrate(20)
     print(vals)
     print(pos)
+    pli.status = "done" # this stops the listener task and ends the script
+
+async def interactive_task(pli):
+    '''Interactive mode.'''
+    await pli.interactive()
     pli.status = "done" # this stops the listener task and ends the script
 
 async def acquire_task(pli, base_path):
@@ -510,13 +586,16 @@ async def acquire_task(pli, base_path):
 
 def main(args):
     '''Main function.'''
+
     # create a new PLI machine instance,
     # and configure it
     pli = PLI()
 
     loop = asyncio.get_event_loop()
-    listener_task = loop.create_task(pli.listen_to_pli_machine_messages(pli.pli_serial))
-    # xy_stage_listener_task = loop.create_task(pli.listen_to_xy_stage_messages(pli.xy_stage_serial))
+    listener_task = loop.create_task(
+        pli.listen_to_pli_machine_messages(pli.pli_serial))
+    # xy_stage_listener_task = loop.create_task(
+    #     pli.listen_to_xy_stage_messages(pli.xy_stage_serial))
 
     if args.calibrate is True:
         commands_task = loop.create_task(calibrate_task(pli))
@@ -547,6 +626,11 @@ def main(args):
             else:
                 pli.xy_stage_write(command)
             time.sleep(1)
+    elif args.interactive is True:
+        commands_task = loop.create_task(interactive_task(pli))
+        tasks = [listener_task, commands_task]
+        loop.run_until_complete(asyncio.wait(tasks))
+        print("done interactive mode")
     elif args.acquire is True:
         if args.base_path is None:
             raise ValueError("base_path is required")
@@ -568,7 +652,7 @@ def main(args):
             raise ValueError("exposure is required")
         if args.gamma is None:
             raise ValueError("gamma is required")
-        
+
         base_path = args.base_path
         n_angles = args.n_angles
         n_polarisers = args.n_polarisers
@@ -601,6 +685,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Acquire PLI data.')
     parser.add_argument('--calibrate', action='store_true', help='auto-calibrate the PLI machine')
+    parser.add_argument('--interactive', action='store_true', help='start interactive mode for camera configuration')
     parser.add_argument('--acquire', action='store_true', help='acquire an image')
     parser.add_argument('--base_path', type=str, help='base path for the images')
     parser.add_argument('--n_angles', type=int, help='number of angles')
