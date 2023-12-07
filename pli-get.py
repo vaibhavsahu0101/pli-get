@@ -116,7 +116,7 @@ class PLI:
             if self.debug:
                 print(f"{port}: {desc} [{hwid}]")
             # if "usbmodem" in port or "usbserial" in port:
-            if port in list_of_known_arduino_ports:
+            if max([p in port for p in list_of_known_arduino_ports]) is True:
                 arduino_port = port
         if self.debug:
             print(f"arduino_port: {arduino_port}")
