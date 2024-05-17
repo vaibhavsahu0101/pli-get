@@ -633,6 +633,11 @@ def main(args):
     #     pli.listen_to_xy_stage_messages(pli.xy_stage_serial))
 
     if args.calibrate is True:
+
+        if args.model_name is None:
+         raise ValueError("model_name is required")
+        model_name = args.model_name
+        pli.__init__(model_name)
         commands_task = loop.create_task(calibrate_task(pli))
         tasks = [listener_task, commands_task]
         loop.run_until_complete(asyncio.wait(tasks))
@@ -737,7 +742,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_stepper_steps', type=int, help='number of steps in a whole turn of the stepper motors')
     parser.add_argument('--n_large_gear_teeth', type=int, help='machine number of teeth in the large gear')
     parser.add_argument('--n_small_gear_teeth', type=int, help='machine number of teeth in the small gear')
-    parser.add_argument('--model_name', type=str, help='camera model name')
+    parser.add_argument('--model_name', type=str, help='camera model name') 
     parser.add_argument('--color_mode', type=str, help='camera color mode')
     parser.add_argument('--gain', type=float, help='camera gain')
     parser.add_argument('--exposure', type=float, help='camera exposure time')
